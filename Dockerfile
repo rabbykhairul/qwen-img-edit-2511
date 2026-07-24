@@ -101,17 +101,7 @@ ENV BUILD_VERSION=${BUILD_VERSION}
 
 CMD ["/start.sh"]
 
-# Stage 2: Final image (models baked in at build time)
+# Stage 2: Final image (models download at runtime)
 FROM base AS final
 
-# Bake all models into the image so the worker needs no runtime download and no
-# network volume. /runpod-volume is absent during build, so check-models.sh writes
-# to /comfyui/models. The script exits 0 even on a failed download, so assert every
-# file is present to fail the build on an incomplete bake.
-ARG HF_TOKEN=""
-RUN HF_TOKEN="${HF_TOKEN}" /usr/local/bin/check-models.sh \
-    && test -f /comfyui/models/diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors \
-    && test -f /comfyui/models/clip/qwen_2.5_vl_7b_fp8_scaled.safetensors \
-    && test -f /comfyui/models/vae/qwen_image_vae.safetensors \
-    && test -f /comfyui/models/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors \
-    && test -f /comfyui/models/loras/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors
+# Models are downloaded at runtime with hf_xet acceleration (see check-models.sh)
