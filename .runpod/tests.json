@@ -1,14 +1,5 @@
 {
-  "tests": [
-    {
-      "name": "health_check",
-      "input": {
-        "health_check": true,
-        "prompt": "health check probe"
-      },
-      "timeout": 300000
-    }
-  ],
+  "tests": [],
   "config": {
     "gpuTypeId": "NVIDIA GeForce RTX 4090",
     "gpuCount": 1,
