@@ -90,7 +90,7 @@ RUN chmod +x /usr/local/bin/check-models.sh
 # Go back to root for handler files
 WORKDIR /
 
-ADD src/start.sh handler.py test_input.json ./
+ADD src/start.sh test_input.json ./
 RUN chmod +x /start.sh
 
 # Enable high-performance downloads from HuggingFace (hf_xet chunk-based parallel transfers).
@@ -115,3 +115,8 @@ RUN HF_TOKEN="${HF_TOKEN}" /usr/local/bin/check-models.sh \
     && test -f /comfyui/models/vae/qwen_image_vae.safetensors \
     && test -f /comfyui/models/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors \
     && test -f /comfyui/models/loras/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors
+
+# handler.py is copied LAST — after the model bake — so a handler-only change reuses the
+# cached ~30 GB model layers instead of re-baking them, and RunPod only re-pulls this
+# tiny layer instead of the whole image.
+COPY handler.py /handler.py

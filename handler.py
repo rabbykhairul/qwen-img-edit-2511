@@ -387,6 +387,10 @@ def build_edit_workflow(
             "inputs": {
                 "upscale_method": "lanczos",
                 "megapixels": megapixels,
+                # Rounds dims to a multiple of 16 (matches FluxKontextImageScale, Qwen-VAE safe).
+                # Must be set explicitly: ComfyUI treats defaulted inputs as required in
+                # API-format workflows (Comfy-Org/ComfyUI#11833), so omitting it fails validation.
+                "resolution_steps": 16,
                 "image": ["170:160", 0],
             },
             "class_type": "ImageScaleToTotalPixels",
