@@ -341,6 +341,7 @@ def build_edit_workflow(
     shift=3.1,
     sampler="euler",
     scheduler="simple",
+    megapixels=None,
 ):
     lora_key, use_lora, auto_cfg = _resolve_lora_mode(steps, lora)
     effective_cfg = cfg if cfg is not None else auto_cfg
@@ -378,6 +379,23 @@ def build_edit_workflow(
     # Shift (ModelSamplingAuraFlow)
     workflow["170:145"]["inputs"]["shift"] = shift
 
+    # FluxKontextImageScale (170:160) pins the source to ~1 MP, so a scaler placed
+    # AFTER it is the only way to sample below 1 MP. Absent param → node never added
+    # → default ~1 MP behavior stays byte-identical.
+    if megapixels is not None:
+        workflow["170:200"] = {
+            "inputs": {
+                "upscale_method": "lanczos",
+                "megapixels": megapixels,
+                "image": ["170:160", 0],
+            },
+            "class_type": "ImageScaleToTotalPixels",
+            "_meta": {"title": "Resolution scale"},
+        }
+        workflow["170:156"]["inputs"]["pixels"] = ["170:200", 0]
+        workflow["170:149"]["inputs"]["image1"] = ["170:200", 0]
+        workflow["170:151"]["inputs"]["image1"] = ["170:200", 0]
+
     return workflow
 
 
@@ -392,6 +410,7 @@ def validate_input(job_input):
        - image (str, required): Base64-encoded source image or image name already uploaded
        - seed (int, optional): Random seed
        - steps (int, optional): Inference steps, default 4
+       - megapixels (float, optional): Sample below ~1 MP (0.3–1.2) for faster generation; omit for full ~1 MP
        - negative_prompt (str, optional): Default ""
        - lora (str, optional): Override LoRA: "4step", "8step", "none"
        - cfg (float, optional): CFG scale (auto: 1.0 for Lightning, 4.0 for base)
@@ -439,6 +458,12 @@ def validate_input(job_input):
         _steps_val = job_input.get("steps", 4)
         if not isinstance(_steps_val, int) or _steps_val < 1:
             return None, "'steps' must be a positive integer"
+
+        _megapixels_val = job_input.get("megapixels")
+        if _megapixels_val is not None and (
+            not isinstance(_megapixels_val, (int, float)) or not (0.3 <= _megapixels_val <= 1.2)
+        ):
+            return None, "'megapixels' must be a number between 0.3 and 1.2"
 
         _cfg_val = job_input.get("cfg")
         if _cfg_val is not None and (not isinstance(_cfg_val, (int, float)) or _cfg_val < 0):
@@ -490,6 +515,7 @@ def validate_input(job_input):
             shift=_shift_val if _shift_val is not None else 3.1,
             sampler=_sampler_val,
             scheduler=_scheduler_val,
+            megapixels=_megapixels_val,
         )
         # Carry the images for upload
         if images:
