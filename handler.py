@@ -986,6 +986,70 @@ def get_image_data(filename, subfolder, image_type):
         return None
 
 
+_R2_CONTENT_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+_r2_client = None
+
+
+def _r2_config():
+    """Return R2 upload config if all required env vars are set, else None."""
+    endpoint = os.environ.get("R2_ENDPOINT_URL")
+    bucket = os.environ.get("R2_BUCKET")
+    key_id = os.environ.get("R2_ACCESS_KEY_ID")
+    secret = os.environ.get("R2_SECRET_ACCESS_KEY")
+    if not (endpoint and bucket and key_id and secret):
+        return None
+    return {
+        "endpoint": endpoint,
+        "bucket": bucket,
+        "key_id": key_id,
+        "secret": secret,
+        "public_base": os.environ.get("R2_PUBLIC_BASE_URL"),
+        "expiry": int(os.environ.get("R2_URL_EXPIRY", "604800")),
+    }
+
+
+def upload_image_to_r2(job_id, image_bytes, filename, content_type, cfg):
+    """Upload output image bytes to Cloudflare R2 and return a fetchable URL.
+
+    rp_upload can't target R2 — it derives the bucket name from the endpoint
+    hostname (AWS-shaped), which breaks on R2's <account>.r2.cloudflarestorage.com.
+    So upload with an explicit bucket via a plain boto3 S3 client. boto3 ships with
+    the runpod package (rp_upload uses it), so this adds no new dependency.
+    """
+    global _r2_client
+    if _r2_client is None:
+        import boto3
+        from botocore.config import Config
+
+        _r2_client = boto3.client(
+            "s3",
+            endpoint_url=cfg["endpoint"],
+            aws_access_key_id=cfg["key_id"],
+            aws_secret_access_key=cfg["secret"],
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+
+    key = f"{job_id}/{filename}"
+    _r2_client.put_object(
+        Bucket=cfg["bucket"], Key=key, Body=image_bytes, ContentType=content_type
+    )
+
+    if cfg["public_base"]:
+        return f"{cfg['public_base'].rstrip('/')}/{key}"
+    return _r2_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": cfg["bucket"], "Key": key},
+        ExpiresIn=cfg["expiry"],
+    )
+
+
 def handler(job):
     """
     Handles an image editing job using Qwen-Image-Edit-2511 via ComfyUI.
@@ -1196,7 +1260,24 @@ def handler(job):
                     if image_bytes:
                         file_extension = os.path.splitext(filename)[1] or ".png"
 
-                        if os.environ.get("BUCKET_ENDPOINT_URL"):
+                        r2_cfg = _r2_config()
+                        if r2_cfg:
+                            try:
+                                content_type = _R2_CONTENT_TYPES.get(
+                                    file_extension.lower(), "application/octet-stream"
+                                )
+                                url = upload_image_to_r2(
+                                    job_id, image_bytes, filename, content_type, r2_cfg
+                                )
+                                print(f"worker-comfyui - Uploaded {filename} to R2: {url}")
+                                output_data.append(
+                                    {"filename": filename, "type": "s3_url", "data": url}
+                                )
+                            except Exception as e:
+                                error_msg = f"Error uploading {filename} to R2: {e}"
+                                print(f"worker-comfyui - {error_msg}")
+                                errors.append(error_msg)
+                        elif os.environ.get("BUCKET_ENDPOINT_URL"):
                             try:
                                 with tempfile.NamedTemporaryFile(
                                     suffix=file_extension, delete=False
