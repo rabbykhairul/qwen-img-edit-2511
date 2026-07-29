@@ -27,18 +27,26 @@ comfy-manager-set-mode offline || echo "worker-comfyui - Could not set ComfyUI-M
 
 echo "worker-comfyui: Starting ComfyUI"
 
-# Allow operators to tweak verbosity; default is DEBUG.
-: "${COMFY_LOG_LEVEL:=DEBUG}"
+# DEBUG emits one line per quantized op per sampling step — ~3,600 lines for a 4-step job,
+# logged from inside the sampling loop — and floods the console buffer hard enough to push
+# the boot output out of a captured log.
+: "${COMFY_LOG_LEVEL:=INFO}"
 
-# Serve the API and don't shutdown the container
+# Extra ComfyUI launch flags, set per endpoint. Memory, attention and precision options
+# live here rather than baked in so they can be A/B tested from the console instead of
+# costing a rebuild plus fleet-wide FlashBoot snapshot invalidation each.
+: "${COMFY_EXTRA_ARGS:=}"
+
+# Unquoted on purpose: the value is a flag list and must word-split.
+# shellcheck disable=SC2086
 if [ "$SERVE_API_LOCALLY" == "true" ]; then
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
+    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout ${COMFY_EXTRA_ARGS} &
     echo $! > /tmp/comfyui.pid
 
     echo "worker-comfyui: Starting RunPod Handler"
     python -u /handler.py --rp_serve_api --rp_api_host=0.0.0.0
 else
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
+    python -u /comfyui/main.py --disable-auto-launch --disable-metadata --verbose "${COMFY_LOG_LEVEL}" --log-stdout ${COMFY_EXTRA_ARGS} &
     echo $! > /tmp/comfyui.pid
 
     echo "worker-comfyui: Starting RunPod Handler"
