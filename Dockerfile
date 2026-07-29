@@ -53,8 +53,12 @@ RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
 # Install ComfyUI runtime requirements
 RUN uv pip install -r /comfyui/requirements.txt
 
-# Force-install PyTorch cu128 for Blackwell (RTX 5090) and backwards compatibility
-RUN uv pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# cu130 is what unlocks comfy-kitchen's `cuda` and `triton` backends. On cu128 both report
+# available:True disabled:True, and every quantized op falls back to eager dispatch —
+# ~3,600 per-layer dequantize calls for a 4-step job. The cost is a CUDA 13.0 driver floor
+# (580+), a major-version bump with no minor-version compatibility to fall back on.
+ARG TORCH_CUDA_CHANNEL=cu130
+RUN uv pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL}
 
 # Support for the network volume
 ADD src/extra_model_paths.yaml /comfyui/
@@ -92,6 +96,27 @@ WORKDIR /
 
 ADD src/start.sh test_input.json ./
 RUN chmod +x /start.sh
+
+# Without this every cold container regenerates __pycache__ for torch and ComfyUI into the
+# writable layer on first import, and throws it away when the worker dies.
+RUN python -m compileall -q /opt/venv/lib/python3.12/site-packages /comfyui || true
+
+# ComfyUI creates its asset DB on first start and walks six Alembic revisions to get there;
+# baking the finished DB skips that on every cold boot. Best-effort — a ComfyUI version that
+# doesn't support this exit-after-init path just leaves the DB to be built at runtime.
+RUN timeout 300 python /comfyui/main.py --cpu --disable-auto-launch --quick-test-for-ci >/dev/null 2>&1 || true; \
+    test -f /comfyui/user/comfyui.db \
+      && echo "comfyui.db seeded at build" \
+      || echo "comfyui.db NOT seeded — migrations will run at boot"
+
+# nvidia/cuda ships forward-compat driver stubs here and the runtime prefers them over the
+# host driver whenever the host is older. NVIDIA supports that path only on data-center
+# GPUs, so on GeForce it fails with CUDA error 804 after the container has already started.
+RUN rm -rf /usr/local/cuda/compat
+
+# Must track TORCH_CUDA_CHANNEL — cu130 needs a 13.0 driver, cu128 needs 12.0.
+ARG REQUIRE_CUDA=13.0
+ENV NVIDIA_REQUIRE_CUDA="cuda>=${REQUIRE_CUDA}"
 
 # Enable high-performance downloads from HuggingFace (hf_xet chunk-based parallel transfers).
 ENV HF_XET_HIGH_PERFORMANCE=1
