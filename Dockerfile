@@ -53,11 +53,14 @@ RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
 # Install ComfyUI runtime requirements
 RUN uv pip install -r /comfyui/requirements.txt
 
-# cu130 is what unlocks comfy-kitchen's `cuda` and `triton` backends. On cu128 both report
-# available:True disabled:True, and every quantized op falls back to eager dispatch —
-# ~3,600 per-layer dequantize calls for a 4-step job. The cost is a CUDA 13.0 driver floor
-# (580+), a major-version bump with no minor-version compatibility to fall back on.
-ARG TORCH_CUDA_CHANNEL=cu130
+# cu130 unlocks comfy-kitchen's `cuda` and `triton` backends — on cu128 both report
+# available:True disabled:True and every quantized op falls back to eager dispatch, ~3,600
+# per-layer dequantize calls for a 4-step job. It also pins the driver floor to CUDA 13.0,
+# and RunPod's Blackwell pool still holds 570-series hosts that reject that at prestart:
+# an RTX 5090 is valid Blackwell hardware and still one major version short. Default stays
+# cu128; build --build-arg TORCH_CUDA_CHANNEL=cu130 --build-arg REQUIRE_CUDA=13.0 to test
+# it behind a 13.0 endpoint filter.
+ARG TORCH_CUDA_CHANNEL=cu128
 RUN uv pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL}
 
 # Support for the network volume
@@ -115,7 +118,7 @@ RUN timeout 300 python /comfyui/main.py --cpu --disable-auto-launch --quick-test
 RUN rm -rf /usr/local/cuda/compat
 
 # Must track TORCH_CUDA_CHANNEL — cu130 needs a 13.0 driver, cu128 needs 12.0.
-ARG REQUIRE_CUDA=13.0
+ARG REQUIRE_CUDA=12.0
 ENV NVIDIA_REQUIRE_CUDA="cuda>=${REQUIRE_CUDA}"
 
 # Enable high-performance downloads from HuggingFace (hf_xet chunk-based parallel transfers).
