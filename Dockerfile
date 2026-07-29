@@ -104,14 +104,6 @@ RUN chmod +x /start.sh
 # writable layer on first import, and throws it away when the worker dies.
 RUN python -m compileall -q /opt/venv/lib/python3.12/site-packages /comfyui || true
 
-# ComfyUI creates its asset DB on first start and walks six Alembic revisions to get there;
-# baking the finished DB skips that on every cold boot. Best-effort — a ComfyUI version that
-# doesn't support this exit-after-init path just leaves the DB to be built at runtime.
-RUN timeout 300 python /comfyui/main.py --cpu --disable-auto-launch --quick-test-for-ci >/dev/null 2>&1 || true; \
-    test -f /comfyui/user/comfyui.db \
-      && echo "comfyui.db seeded at build" \
-      || echo "comfyui.db NOT seeded — migrations will run at boot"
-
 # nvidia/cuda ships forward-compat driver stubs here and the runtime prefers them over the
 # host driver whenever the host is older. NVIDIA supports that path only on data-center
 # GPUs, so on GeForce it fails with CUDA error 804 after the container has already started.
