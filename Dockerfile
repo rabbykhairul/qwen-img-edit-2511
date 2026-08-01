@@ -4,7 +4,12 @@ ARG BASE_IMAGE=nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
 # Stage 1: Base image with all dependencies
 FROM ${BASE_IMAGE} AS base
 
-ARG COMFYUI_VERSION=latest
+# Pinned, not `latest`. ComfyUI leaves torch unpinned in requirements.txt, so `latest`
+# drags in whatever PyTorch shipped most recently — currently 2.13.0, which exists only
+# as a cu130 build. The cu128 channel is frozen at torch 2.11.0, so tracking latest
+# silently pairs a newer ComfyUI with a torch its CUDA channel cannot supply. 0.28.3 is
+# the version running in production today.
+ARG COMFYUI_VERSION=0.28.3
 ARG CUDA_VERSION_FOR_COMFY
 ARG COMFY_CUSTOM_NODES=comfyui-image-saver
 ARG BUILD_VERSION=dev
@@ -52,19 +57,20 @@ RUN uv pip install comfy-cli pip setuptools wheel
 # it behind a 13.0 endpoint filter.
 ARG TORCH_CUDA_CHANNEL=cu128
 
-# ComfyUI, its requirements and torch install in ONE layer on purpose. comfy-cli installs
-# its own torch, and a later --force-reinstall in a separate layer only masks it: the first
-# copy stays in the lower layer and ships anyway, several GB of it. --skip-torch-or-directml
-# keeps it out entirely, and cu128 torch lands last so nothing pulled by requirements.txt
-# can downgrade it. torchaudio is dropped — image workflows never load it.
+# ComfyUI, its requirements and torch install in ONE layer on purpose. Splitting them lets
+# a masked torch ship anyway: --force-reinstall replaces the file but the earlier copy stays
+# in the lower layer, several GB of it. --skip-torch-or-directml stops comfy-cli fetching a
+# torch at all; --force-reinstall is still required on the last step because requirements.txt
+# pulls torch from PyPI and uv would otherwise treat the requirement as already satisfied
+# and never consult the cu128 index. torchaudio is dropped — image workflows never load it.
 RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
       /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --cuda-version "${CUDA_VERSION_FOR_COMFY}" --nvidia --fast-deps --skip-torch-or-directml; \
     else \
       /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia --fast-deps --skip-torch-or-directml; \
     fi \
  && uv pip install -r /comfyui/requirements.txt \
- && uv pip install torch torchvision --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL} \
- && python -c "import torch; assert torch.__version__.split('+')[1] == '${TORCH_CUDA_CHANNEL}', torch.__version__"
+ && uv pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL} \
+ && python -c "import torch; assert torch.__version__.split('+')[-1] == '${TORCH_CUDA_CHANNEL}', torch.__version__"
 
 # Support for the network volume
 ADD src/extra_model_paths.yaml /comfyui/
