@@ -62,15 +62,19 @@ ARG TORCH_CUDA_CHANNEL=cu128
 # in the lower layer, several GB of it. --skip-torch-or-directml stops comfy-cli fetching a
 # torch at all; --force-reinstall is still required on the last step because requirements.txt
 # pulls torch from PyPI and uv would otherwise treat the requirement as already satisfied
-# and never consult the cu128 index. torchaudio is dropped — image workflows never load it.
+# and never consult the cu128 index. torchaudio has to be reinstalled alongside the other
+# two even though no image workflow uses it: comfy_extras/nodes_audio.py imports it at
+# startup, and the PyPI build links libcudart.so.13 which a cu128 torch does not ship.
 RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
       /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --cuda-version "${CUDA_VERSION_FOR_COMFY}" --nvidia --fast-deps --skip-torch-or-directml; \
     else \
       /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia --fast-deps --skip-torch-or-directml; \
     fi \
  && uv pip install -r /comfyui/requirements.txt \
- && uv pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL} \
- && python -c "import torch; assert torch.__version__.split('+')[-1] == '${TORCH_CUDA_CHANNEL}', torch.__version__"
+ && uv pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL} \
+ && python -c "import torch, torchvision, torchaudio; \
+    [__import__('sys').exit(f'{m.__name__} {m.__version__}') for m in (torch, torchvision, torchaudio) \
+     if m.__version__.split('+')[-1] != '${TORCH_CUDA_CHANNEL}']"
 
 # Support for the network volume
 ADD src/extra_model_paths.yaml /comfyui/
