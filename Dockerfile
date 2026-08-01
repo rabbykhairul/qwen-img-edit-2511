@@ -43,16 +43,6 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # Install comfy-cli + dependencies
 RUN uv pip install comfy-cli pip setuptools wheel
 
-# Install ComfyUI
-RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
-      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --cuda-version "${CUDA_VERSION_FOR_COMFY}" --nvidia --fast-deps; \
-    else \
-      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia --fast-deps; \
-    fi
-
-# Install ComfyUI runtime requirements
-RUN uv pip install -r /comfyui/requirements.txt
-
 # cu130 unlocks comfy-kitchen's `cuda` and `triton` backends — on cu128 both report
 # available:True disabled:True and every quantized op falls back to eager dispatch, ~3,600
 # per-layer dequantize calls for a 4-step job. It also pins the driver floor to CUDA 13.0,
@@ -61,7 +51,20 @@ RUN uv pip install -r /comfyui/requirements.txt
 # cu128; build --build-arg TORCH_CUDA_CHANNEL=cu130 --build-arg REQUIRE_CUDA=13.0 to test
 # it behind a 13.0 endpoint filter.
 ARG TORCH_CUDA_CHANNEL=cu128
-RUN uv pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL}
+
+# ComfyUI, its requirements and torch install in ONE layer on purpose. comfy-cli installs
+# its own torch, and a later --force-reinstall in a separate layer only masks it: the first
+# copy stays in the lower layer and ships anyway, several GB of it. --skip-torch-or-directml
+# keeps it out entirely, and cu128 torch lands last so nothing pulled by requirements.txt
+# can downgrade it. torchaudio is dropped — image workflows never load it.
+RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
+      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --cuda-version "${CUDA_VERSION_FOR_COMFY}" --nvidia --fast-deps --skip-torch-or-directml; \
+    else \
+      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia --fast-deps --skip-torch-or-directml; \
+    fi \
+ && uv pip install -r /comfyui/requirements.txt \
+ && uv pip install torch torchvision --index-url https://download.pytorch.org/whl/${TORCH_CUDA_CHANNEL} \
+ && python -c "import torch; assert torch.__version__.split('+')[1] == '${TORCH_CUDA_CHANNEL}', torch.__version__"
 
 # Support for the network volume
 ADD src/extra_model_paths.yaml /comfyui/
@@ -103,6 +106,13 @@ RUN chmod +x /start.sh
 # Without this every cold container regenerates __pycache__ for torch and ComfyUI into the
 # writable layer on first import, and throws it away when the worker dies.
 RUN python -m compileall -q /opt/venv/lib/python3.12/site-packages /comfyui || true
+
+# ComfyUI runs six alembic migrations against an empty SQLite file on every cold boot
+# ("Database upgraded from None to 0006_add_loader_path"). Creating the database here
+# leaves it at head so the runtime check finds nothing to do. The assertion matters: a
+# silent no-op here would look identical to a working seed in the build log.
+RUN python /comfyui/main.py --cpu --disable-auto-launch --quick-test-for-ci \
+    && test -s /comfyui/user/comfyui.db
 
 # nvidia/cuda ships forward-compat driver stubs here and the runtime prefers them over the
 # host driver whenever the host is older. NVIDIA supports that path only on data-center
