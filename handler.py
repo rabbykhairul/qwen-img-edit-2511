@@ -19,7 +19,6 @@ import random
 # LoRA filenames for the Edit-2511 model
 LORA_FILES = {
     "4step": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
-    "8step": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
 }
 
 # Time to wait between API check attempts in milliseconds
@@ -309,7 +308,7 @@ def _resolve_lora_mode(steps, lora_param=None):
     """Determine which LoRA to use based on steps and optional lora override.
 
     Returns: (lora_key, use_lora, auto_cfg)
-        lora_key  - "4step", "8step", or None
+        lora_key  - "4step" or None
         use_lora  - bool, whether to enable the LoRA path via the switch
         auto_cfg  - recommended CFG value (1.0 for Lightning, 4.0 for base)
     """
@@ -320,12 +319,13 @@ def _resolve_lora_mode(steps, lora_param=None):
         if lora_param in LORA_FILES:
             return lora_param, True, 1.0
         raise ValueError(
-            f"Invalid lora value '{lora_param}'. Must be '4step', '8step', or 'none'."
+            f"Invalid lora value '{lora_param}'. Must be '4step' or 'none'."
         )
-    if steps <= 4:
-        return "4step", True, 1.0
+    # The 8-step LoRA is no longer baked, so 5-8 steps resolve to the 4-step one rather
+    # than dropping to the base model: it converges by step 4 and further steps only
+    # refine, whereas the base model at 8 steps is far short of converged.
     if steps <= 8:
-        return "8step", True, 1.0
+        return "4step", True, 1.0
     return None, False, 4.0
 
 
@@ -416,7 +416,7 @@ def validate_input(job_input):
        - steps (int, optional): Inference steps, default 4
        - megapixels (float, optional): Sample below ~1 MP (0.3–1.2) for faster generation; omit for full ~1 MP
        - negative_prompt (str, optional): Default ""
-       - lora (str, optional): Override LoRA: "4step", "8step", "none"
+       - lora (str, optional): Override LoRA: "4step", "none"
        - cfg (float, optional): CFG scale (auto: 1.0 for Lightning, 4.0 for base)
        - shift (float, optional): ModelSamplingAuraFlow shift, default 3.1
        - sampler (str, optional): KSampler sampler, default "euler"
@@ -456,8 +456,8 @@ def validate_input(job_input):
         _lora_val = job_input.get("lora")
         if _lora_val is not None:
             _lora_val = str(_lora_val).lower().strip()
-            if _lora_val not in ("4step", "8step", "none"):
-                return None, "'lora' must be '4step', '8step', or 'none'"
+            if _lora_val not in ("4step", "none"):
+                return None, "'lora' must be '4step' or 'none'"
 
         _steps_val = job_input.get("steps", 4)
         if not isinstance(_steps_val, int) or _steps_val < 1:
@@ -707,13 +707,6 @@ QWEN_MODELS = {
         "relative_path": "loras",
         "filename": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
         "name": "Qwen Edit Lightning 4-step LoRA",
-        "type": "loras"
-    },
-    "loras/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors": {
-        "url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
-        "relative_path": "loras",
-        "filename": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
-        "name": "Qwen Edit Lightning 8-step LoRA",
         "type": "loras"
     }
 }
