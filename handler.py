@@ -1051,7 +1051,7 @@ def handler(job):
     1. Raw workflow: {"input": {"workflow": {...}, "images": [...]}}
     2. Simplified edit: {"input": {"prompt": "edit instruction", "image": "base64...", ...}}
     """
-    job_input = job["input"]
+    job_input = job.get("input") or {}
     job_id = job["id"]
 
     # Health-check probe for RunPod Hub test validation — returns immediately
@@ -1363,4 +1363,9 @@ def handler(job):
 
 if __name__ == "__main__":
     print("worker-comfyui - Starting handler...")
-    runpod.serverless.start({"handler": handler})
+    if os.environ.get("WORKER_RUNTIME", "runpod").lower() == "novita":
+        import novita_gpus
+
+        novita_gpus.start({"handler": handler})
+    else:
+        runpod.serverless.start({"handler": handler})
