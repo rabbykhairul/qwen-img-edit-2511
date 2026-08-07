@@ -50,12 +50,14 @@ RUN uv pip install comfy-cli pip setuptools wheel
 
 # cu130 unlocks comfy-kitchen's `cuda` and `triton` backends — on cu128 both report
 # available:True disabled:True and every quantized op falls back to eager dispatch, ~3,600
-# per-layer dequantize calls for a 4-step job. It also pins the driver floor to CUDA 13.0,
-# and RunPod's Blackwell pool still holds 570-series hosts that reject that at prestart:
-# an RTX 5090 is valid Blackwell hardware and still one major version short. Default stays
-# cu128; build --build-arg TORCH_CUDA_CHANNEL=cu130 --build-arg REQUIRE_CUDA=13.0 to test
-# it behind a 13.0 endpoint filter.
-ARG TORCH_CUDA_CHANNEL=cu128
+# per-layer dequantize calls for a 4-step job. That eager path is what makes a cold model
+# load cost ~60s of `manual cast` instead of a few seconds, and it is normally hidden
+# because DynamicVRAM streams it lazily under the sampling loop.
+# The cost is a CUDA 13.0 driver floor: RunPod's Blackwell pool still holds 570-series
+# hosts that reject it at prestart — an RTX 5090 is valid Blackwell hardware and still one
+# major version short — so the endpoint must filter to 13.0 or workers will fail to start.
+# Revert with --build-arg TORCH_CUDA_CHANNEL=cu128 --build-arg REQUIRE_CUDA=12.0.
+ARG TORCH_CUDA_CHANNEL=cu130
 
 # ComfyUI, its requirements and torch install in ONE layer on purpose. Splitting them lets
 # a masked torch ship anyway: --force-reinstall replaces the file but the earlier copy stays
@@ -130,7 +132,7 @@ RUN python /comfyui/main.py --cpu --disable-auto-launch --quick-test-for-ci \
 RUN rm -rf /usr/local/cuda/compat
 
 # Must track TORCH_CUDA_CHANNEL — cu130 needs a 13.0 driver, cu128 needs 12.0.
-ARG REQUIRE_CUDA=12.0
+ARG REQUIRE_CUDA=13.0
 ENV NVIDIA_REQUIRE_CUDA="cuda>=${REQUIRE_CUDA}"
 
 # Enable high-performance downloads from HuggingFace (hf_xet chunk-based parallel transfers).
