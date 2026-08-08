@@ -49,15 +49,18 @@ ENV PATH="/opt/venv/bin:${PATH}"
 RUN uv pip install comfy-cli pip setuptools wheel
 
 # cu130 unlocks comfy-kitchen's `cuda` and `triton` backends — on cu128 both report
-# available:True disabled:True and every quantized op falls back to eager dispatch, ~3,600
-# per-layer dequantize calls for a 4-step job. That eager path is what makes a cold model
-# load cost ~60s of `manual cast` instead of a few seconds, and it is normally hidden
-# because DynamicVRAM streams it lazily under the sampling loop.
-# The cost is a CUDA 13.0 driver floor: RunPod's Blackwell pool still holds 570-series
-# hosts that reject it at prestart — an RTX 5090 is valid Blackwell hardware and still one
-# major version short — so the endpoint must filter to 13.0 or workers will fail to start.
-# Revert with --build-arg TORCH_CUDA_CHANNEL=cu128 --build-arg REQUIRE_CUDA=12.0.
-ARG TORCH_CUDA_CHANNEL=cu130
+# available:True disabled:True and quantized ops fall back to eager dispatch, ~3,600
+# per-layer dequantize calls for a 4-step job. That count reads expensive and is not:
+# tried and reverted after measuring. Sampling is matmul-bound, not dequant-bound, so
+# unlocking the backends cost more than it saved — warm exec 12.10s -> 13.53s (+11.6%,
+# n=97 over seven batches) against a cold model-load delta that improved only 5.6s ->
+# 4.07s. Net negative at any volume, because warm is the common case. Contention outliers
+# survived too (22.35s exec on a warm worker, weights already resident), so the tail is
+# not a dequant artefact either. cu130 also pins the driver floor to CUDA 13.0, which
+# RunPod's 570-series Blackwell hosts reject at prestart.
+# Retry only with --build-arg TORCH_CUDA_CHANNEL=cu130 --build-arg REQUIRE_CUDA=13.0, and
+# only if a newer torch changes the sampling path.
+ARG TORCH_CUDA_CHANNEL=cu128
 
 # ComfyUI, its requirements and torch install in ONE layer on purpose. Splitting them lets
 # a masked torch ship anyway: --force-reinstall replaces the file but the earlier copy stays
@@ -132,7 +135,7 @@ RUN python /comfyui/main.py --cpu --disable-auto-launch --quick-test-for-ci \
 RUN rm -rf /usr/local/cuda/compat
 
 # Must track TORCH_CUDA_CHANNEL — cu130 needs a 13.0 driver, cu128 needs 12.0.
-ARG REQUIRE_CUDA=13.0
+ARG REQUIRE_CUDA=12.0
 ENV NVIDIA_REQUIRE_CUDA="cuda>=${REQUIRE_CUDA}"
 
 # Enable high-performance downloads from HuggingFace (hf_xet chunk-based parallel transfers).
@@ -161,10 +164,11 @@ RUN HF_TOKEN="${HF_TOKEN}" /usr/local/bin/check-models.sh \
 # the ~30 GB model bake above, so adding a package there re-bakes the models on every build.
 RUN uv pip install novita-gpus
 
-# Same reason — after the bake, not in the base apt layer. These are runtime deps for
-# Triton, which cu130 enables: torch routes ops like bmm_outer_product to a Triton impl
-# that JIT-compiles a CUDA stub on first call, and the -runtime base ships no compiler.
-# Without them every job dies in TextEncodeQwenImageEditPlus with "Failed to find C
+# Same reason — after the bake, not in the base apt layer. Unused on cu128, where Triton
+# stays disabled; kept so the cu130 path above is one build arg away rather than one build
+# arg plus a runtime failure. On cu130 torch routes ops like bmm_outer_product to a Triton
+# impl that JIT-compiles a CUDA stub on first call, and the -runtime base ships no
+# compiler, so every job dies in TextEncodeQwenImageEditPlus with "Failed to find C
 # compiler". python3.12-dev supplies the Python.h the stub includes.
 RUN apt-get update && apt-get install -y gcc python3.12-dev \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
