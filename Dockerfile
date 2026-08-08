@@ -161,6 +161,14 @@ RUN HF_TOKEN="${HF_TOKEN}" /usr/local/bin/check-models.sh \
 # the ~30 GB model bake above, so adding a package there re-bakes the models on every build.
 RUN uv pip install novita-gpus
 
+# Same reason — after the bake, not in the base apt layer. These are runtime deps for
+# Triton, which cu130 enables: torch routes ops like bmm_outer_product to a Triton impl
+# that JIT-compiles a CUDA stub on first call, and the -runtime base ships no compiler.
+# Without them every job dies in TextEncodeQwenImageEditPlus with "Failed to find C
+# compiler". python3.12-dev supplies the Python.h the stub includes.
+RUN apt-get update && apt-get install -y gcc python3.12-dev \
+    && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
+
 # handler.py is copied LAST — after the model bake — so a handler-only change reuses the
 # cached ~30 GB model layers instead of re-baking them, and RunPod only re-pulls this
 # tiny layer instead of the whole image.
