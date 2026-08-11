@@ -135,8 +135,11 @@ RUN rm -rf /usr/local/cuda/compat
 ARG REQUIRE_CUDA=12.0
 ENV NVIDIA_REQUIRE_CUDA="cuda>=${REQUIRE_CUDA}"
 
-# Enable high-performance downloads from HuggingFace (hf_xet chunk-based parallel transfers).
-ENV HF_XET_HIGH_PERFORMANCE=1
+# hf_xet's high-performance mode widens chunk parallelism and the in-flight buffers that go
+# with it, which OOMs the 16 GB GitHub runner on the 20.5 GB diffusion model — the bake dies
+# with "cannot allocate memory" and takes 42 minutes to get there. Only the build downloads
+# anything: the final stage asserts every weight is present, so at runtime this is inert.
+ENV HF_XET_HIGH_PERFORMANCE=0
 
 # Stamp build version for runtime identification
 ENV BUILD_VERSION=${BUILD_VERSION}
