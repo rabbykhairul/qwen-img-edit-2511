@@ -115,9 +115,6 @@ RUN chmod +x /usr/local/bin/check-models.sh
 # Go back to root for handler files
 WORKDIR /
 
-ADD src/start.sh test_input.json ./
-RUN chmod +x /start.sh
-
 # Without this every cold container regenerates __pycache__ for torch and ComfyUI into the
 # writable layer on first import, and throws it away when the worker dies.
 RUN python -m compileall -q /opt/venv/lib/python3.12/site-packages /comfyui || true
@@ -173,7 +170,11 @@ RUN uv pip install novita-gpus
 RUN apt-get update && apt-get install -y gcc python3.12-dev \
     && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
-# handler.py is copied LAST — after the model bake — so a handler-only change reuses the
-# cached ~30 GB model layers instead of re-baking them, and RunPod only re-pulls this
-# tiny layer instead of the whole image.
+# The entrypoint and handler are copied LAST — after the model bake — so a change to either
+# reuses the cached ~30 GB model layers instead of re-baking them, and RunPod only re-pulls
+# this tiny layer instead of the whole image. start.sh in particular carries the launch
+# flags and the prefetch tuning, so it is the file most likely to be iterated on.
+ADD src/start.sh test_input.json ./
+RUN chmod +x /start.sh
+
 COPY handler.py /handler.py
