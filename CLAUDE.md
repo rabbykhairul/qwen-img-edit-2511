@@ -47,7 +47,7 @@ Not portable to other projects:
 - Reference LoadImage: `"83"` — reference image (or same as source)
 - LoRA switch: `"170:168"` — boolean enables Lightning path
 - LoraLoaderModelOnly: `"170:153"` — lora_name
-- Positive edit text: `"170:151"`, Negative text: `"170:149"`
+- Positive edit text: `"170:151"`, Negative text: `"170:149"` — swapped for a `ConditioningZeroOut` off the positive whenever CFG resolves to 1.0, since the sampler skips the uncond pass entirely there
 - Shift: `"170:145"` — ModelSamplingAuraFlow
 - FluxKontextImageScale: `"76"` — scales the source image
 

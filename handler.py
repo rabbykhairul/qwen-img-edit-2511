@@ -400,6 +400,18 @@ def build_edit_workflow(
         workflow["170:149"]["inputs"]["image1"] = ["170:200", 0]
         workflow["170:151"]["inputs"]["image1"] = ["170:200", 0]
 
+    # At CFG 1.0 the sampler skips the uncond pass, so nothing ever reads the negative
+    # conditioning — but the graph still executes the node that produces it, and that node
+    # is a full Qwen2.5-VL pass over both images plus two VAE encodes. Swapping it for a
+    # zeroed clone of the positive keeps every downstream link valid and produces identical
+    # pixels. CFGNorm leaves the CFG-1 optimization enabled, so this holds with it patched in.
+    if effective_cfg == 1.0:
+        workflow["170:149"] = {
+            "inputs": {"conditioning": ["170:151", 0]},
+            "class_type": "ConditioningZeroOut",
+            "_meta": {"title": "Negative (unused at CFG 1.0)"},
+        }
+
     return workflow
 
 
