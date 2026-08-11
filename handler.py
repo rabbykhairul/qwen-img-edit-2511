@@ -1032,13 +1032,26 @@ def upload_image_to_r2(job_id, image_bytes, filename, content_type, cfg):
         import boto3
         from botocore.config import Config
 
+        # A 1-2 MB PUT to R2 lands in under a second, but the socket occasionally goes
+        # silent, and botocore's 60s default read timeout means the worker then rents a
+        # Blackwell to hold a dead connection open: one measured stall burned 62s and cost
+        # $0.045 for a single image, three times the per-image target. Timing out at 7s and
+        # retrying is strictly better, since the retry after that stall succeeded in ~2s.
+        # Consequence to keep in mind: three consecutive failures now raise instead of
+        # eventually succeeding, so a sustained R2 outage fails jobs rather than absorbing
+        # unbounded GPU time.
         _r2_client = boto3.client(
             "s3",
             endpoint_url=cfg["endpoint"],
             aws_access_key_id=cfg["key_id"],
             aws_secret_access_key=cfg["secret"],
             region_name="auto",
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                connect_timeout=3,
+                read_timeout=7,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
         )
 
     key = f"{job_id}/{filename}"
